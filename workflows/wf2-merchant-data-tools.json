@@ -1,0 +1,152 @@
+{
+  "name": "WF2 Merchant Data Tools MCP Server (Full)",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "h8mart-merchant-tools"
+      },
+      "id": "08a47f35-7e5a-4233-9936-b451154debc7",
+      "name": "MCP Server Trigger",
+      "type": "@n8n/n8n-nodes-langchain.mcpTrigger",
+      "typeVersion": 2,
+      "position": [
+        208,
+        144
+      ],
+      "webhookId": "h8mart-merchant-tools"
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Return merchant KPIs for one date: order totals, cancel rate, and on-time SLA rate.",
+        "operation": "executeQuery",
+        "query": "SELECT\n  o.merchant_id,\n  m.name AS merchant_name,\n  COUNT(*)::int AS orders_total,\n  COUNT(*) FILTER (WHERE o.status IN ('cancelled', 'failed'))::int AS cancelled_or_failed,\n  ROUND(\n    COUNT(*) FILTER (WHERE o.status IN ('cancelled', 'failed'))::numeric\n    / NULLIF(COUNT(*), 0),\n    4\n  ) AS cancel_rate,\n  COUNT(*) FILTER (WHERE o.status = 'delivered')::int AS delivered_total,\n  COUNT(*) FILTER (\n    WHERE o.status = 'delivered'\n      AND d.actual_minutes <= d.promised_minutes\n  )::int AS delivered_on_time,\n  ROUND(\n    COUNT(*) FILTER (\n      WHERE o.status = 'delivered'\n        AND d.actual_minutes <= d.promised_minutes\n    )::numeric\n    / NULLIF(COUNT(*) FILTER (WHERE o.status = 'delivered'), 0),\n    4\n  ) AS sla_on_time_rate\nFROM core.orders o\nJOIN core.merchants m ON m.merchant_id = o.merchant_id\nLEFT JOIN core.deliveries d ON d.order_id = o.order_id\nWHERE o.merchant_id = '{{ $fromAI(\"merchant_id\", \"Merchant ID, e.g. M001\") }}'\n  AND o.order_date = '{{ $fromAI(\"order_date\", \"Order date YYYY-MM-DD\") }}'::date\nGROUP BY o.merchant_id, m.name;",
+        "options": {}
+      },
+      "id": "ec549c2a-7a16-45e7-adf2-4cf10a8e8717",
+      "name": "merchant_kpi",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        160,
+        384
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Return cancel/fail reason counts for one merchant and date, plus sample customer notes (untrusted free text).",
+        "operation": "executeQuery",
+        "query": "SELECT\n  o.cancel_reason,\n  COUNT(*)::int AS jumlah,\n  (\n    ARRAY_AGG(o.customer_note)\n      FILTER (WHERE o.customer_note IS NOT NULL AND o.customer_note <> '')\n  )[1:3] AS contoh_catatan_pelanggan\nFROM core.orders o\nWHERE o.merchant_id = '{{ $fromAI(\"merchant_id\", \"Merchant ID, e.g. M001\") }}'\n  AND o.order_date = '{{ $fromAI(\"order_date\", \"Order date YYYY-MM-DD\") }}'::date\n  AND o.status IN ('cancelled', 'failed')\nGROUP BY o.cancel_reason\nORDER BY jumlah DESC;",
+        "options": {}
+      },
+      "id": "649e8388-0066-46ac-b461-72161f9ced8e",
+      "name": "cancel_reasons",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        288,
+        384
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "descriptionType": "manual",
+        "toolDescription": "Return stock rows for one merchant; optional SKU filter (empty sku = all).",
+        "operation": "executeQuery",
+        "query": "SELECT\n  ms.merchant_id,\n  p.sku,\n  p.name AS product_name,\n  ms.qty,\n  ms.synced_at\nFROM core.merchant_stock ms\nJOIN core.products p ON p.product_id = ms.product_id\nWHERE ms.merchant_id = '{{ $fromAI(\"merchant_id\", \"Merchant ID, e.g. M001\") }}'\n  AND (\n    COALESCE('{{ $fromAI(\"sku\", \"Optional SKU like SKU-001; empty = all\") }}', '') = ''\n    OR p.sku = '{{ $fromAI(\"sku\", \"Optional SKU like SKU-001; empty = all\") }}'\n  )\nORDER BY p.sku;",
+        "options": {}
+      },
+      "id": "9933304f-9d28-47ed-97ea-31ff3e83c23f",
+      "name": "stock_status",
+      "type": "n8n-nodes-base.postgresTool",
+      "typeVersion": 2.5,
+      "position": [
+        416,
+        384
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## WF2 · Merchant Data Tools\n\nMCP path: `h8mart-merchant-tools` · credential: PG mcp_reader (read-only)\n\nTools:\n- `merchant_kpi` — orders, cancel rate, SLA\n- `cancel_reasons` — reasons + sample notes\n- `stock_status` — stock by SKU\n\nUsed by WF3 agent and WF1 digest. Publish WF2 first.",
+        "height": 588,
+        "width": 984,
+        "color": 7
+      },
+      "id": "2f4f8c59-de0b-4f36-9515-39a45438753e",
+      "name": "Note · MCP Server",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -176,
+        -48
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "merchant_kpi": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "cancel_reasons": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "stock_status": {
+      "ai_tool": [
+        [
+          {
+            "node": "MCP Server Trigger",
+            "type": "ai_tool",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "0976768f-21c2-4040-8faf-e0e5ddb12a38",
+  "meta": {
+    "instanceId": "0da252a50a13f49b3f353674ee8665d9ab321e699d76583d48ec62f67cb8c0eb"
+  },
+  "nodeGroups": [],
+  "id": "wi8uqkO0x1vhDAFB",
+  "tags": []
+}

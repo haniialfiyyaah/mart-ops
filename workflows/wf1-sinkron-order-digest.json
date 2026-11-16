@@ -1,0 +1,1778 @@
+{
+  "name": "WF1 Stock Sync Order Digest (Full)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "id": "028aafc7-3706-400a-a20a-058d1cfc3628",
+      "name": "Schedule Sync 15m",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        384,
+        400
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nsd.stockRows = [];\nsd.syncMeta = {\n  startMs: Date.now(),\n  merchantsTotal: 0,\n  merchantsOk: 0,\n  merchantsFail: 0,\n};\nreturn [{ json: { sync_started: true } }];"
+      },
+      "id": "5ae28b02-9139-417d-972a-99ec3442020d",
+      "name": "Init Sync Collect",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT merchant_id, name, zone FROM core.merchants WHERE active = true ORDER BY merchant_id;",
+        "options": {}
+      },
+      "id": "1a723a6e-0665-45ab-9e27-1a15d11287de",
+      "name": "List Merchants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nsd.syncMeta.merchantsTotal = $input.all().length;\nreturn $input.all();"
+      },
+      "id": "9b799200-a970-4c9f-8061-89b6a9e45892",
+      "name": "Count Merchants",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1504,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "id": "20392b61-422e-49cd-9804-434ebdd095fa",
+      "name": "Loop Merchants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1728,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "=http://mock-api:8080/merchants/{{ $json.merchant_id }}/stock",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "id": "a0ea6b58-5293-4602-ab7d-8fce4ec55675",
+      "name": "Fetch Merchant Stock API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1952,
+        128
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nif (!Array.isArray(sd.stockRows)) sd.stockRows = [];\n\nconst merchantId = $('Loop Merchants').item.json.merchant_id;\nconst payload = $input.first().json;\nconst items = Array.isArray(payload.items) ? payload.items : [];\n\nfunction toSku(raw) {\n  const digits = String(raw || '').match(/(\\d+)/);\n  if (!digits) return String(raw || '').toUpperCase();\n  return `SKU-${digits[1].padStart(3, '0')}`;\n}\n\nfor (const it of items) {\n  sd.stockRows.push({\n    merchant_id: merchantId,\n    sku: toSku(it.sku),\n    qty: Number(it.qty),\n    synced_at: payload.as_of || new Date().toISOString(),\n  });\n}\nsd.syncMeta.merchantsOk += 1;\nreturn [{ json: { merchant_id: merchantId, ok: true } }];"
+      },
+      "id": "bf6db9f9-cee7-45d7-af57-034acdd6e55d",
+      "name": "Collect Merchant Stock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2176,
+        80
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.dead_letter (\n  workflow, node, execution_id, business_key, error_message, payload, attempts, status\n) VALUES (\n  'WF1 Stock Sync Order Intake Digest',\n  'Fetch Merchant Stock API',\n  '{{ $execution.id }}',\n  '{{ $('Loop Merchants').item.json.merchant_id }}',\n  left('{{ String($json.error?.message || $json.message || \"stock_api_failed\").replace(/'/g, \"''\") }}', 500),\n  '{}'::jsonb,\n  3,\n  'open'\n);",
+        "options": {}
+      },
+      "id": "630f2df0-2406-444a-8f9c-a6746d6b16ab",
+      "name": "Dead Letter Merchant",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2176,
+        272
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nsd.syncMeta.merchantsFail += 1;\nreturn [{ json: { merchant_id: $('Loop Merchants').item.json.merchant_id, failed: true } }];"
+      },
+      "id": "acf942e5-2205-435f-b0ff-8178301792fe",
+      "name": "Count Fail",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "ISI_CHAT_ID",
+        "text": "=<b>H8Mart Ops · Sync dead-letter</b>\nBusiness key (merchant): <code>{{ $('Loop Merchants').item.json.merchant_id }}</code>\nNode: <code>Fetch Merchant Stock API</code>\nTime (WIB): <code>{{ $now.setZone('Asia/Jakarta').toFormat('yyyy-LL-dd HH:mm:ss') }}</code>",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "3257754e-f951-45c7-9d2f-c6c01d60345f",
+      "name": "Alert Merchant Failed",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2624,
+        272
+      ],
+      "webhookId": "ebf3ff56-8f7b-4750-8c6c-dad44c916eae",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst rows = Array.isArray(sd.stockRows) ? sd.stockRows : [];\nif (!rows.length) {\n  return [{ json: { empty: true } }];\n}\nreturn rows.map((r) => ({ json: { ...r, empty: false } }));"
+      },
+      "id": "e0d69154-b2ee-4b3e-804e-d564c05d778a",
+      "name": "Normalize Stock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "e1",
+              "leftValue": "={{ $json.empty }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "ae4adca1-27c3-448f-9e56-aa9194a2e409",
+      "name": "Sync Empty?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2176,
+        592
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "Silent failure: stock sync returned 0 rows"
+      },
+      "id": "6b796bed-f054-43b0-9aca-7368c1771e0b",
+      "name": "Fail Sync 0 Rows",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        2400,
+        752
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { load_catalog: true } }];"
+      },
+      "id": "c9a98658-4c08-4810-9fef-94452e6ef093",
+      "name": "Trigger Catalog Once",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        464
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT product_id, sku FROM core.products ORDER BY sku;",
+        "options": {}
+      },
+      "id": "d56025b0-08c8-4fc5-bc0b-c8f90b4cdc33",
+      "name": "Load Product Catalog",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2624,
+        464
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "fieldsToMatchString": "sku",
+        "options": {}
+      },
+      "id": "93f2dbde-8aea-41ad-8f6f-5ae5d45bbdd6",
+      "name": "Merge Catalog",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        2848,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO core.merchant_stock (merchant_id, product_id, qty, synced_at)\nVALUES (\n  '{{ $json.merchant_id }}',\n  '{{ $json.product_id }}',\n  {{ Number($json.qty) }},\n  '{{ $json.synced_at }}'::timestamptz\n)\nON CONFLICT (merchant_id, product_id) DO UPDATE\nSET qty = EXCLUDED.qty,\n    synced_at = EXCLUDED.synced_at;",
+        "options": {}
+      },
+      "id": "943264fc-66d4-4387-8cdf-bb1a5731b6a9",
+      "name": "Upsert Stock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3072,
+        544
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst meta = sd.syncMeta || { startMs: Date.now(), merchantsTotal: 0, merchantsOk: 0, merchantsFail: 0 };\nconst rows = Array.isArray(sd.stockRows) ? sd.stockRows : [];\nconst prev = Array.isArray(sd.prevPositive) ? sd.prevPositive : [];\nconst prevSet = new Set(prev.map((p) => `${p.merchant_id}|${p.sku}`));\nconst newStockouts = [];\nfor (const r of rows) {\n  const key = `${r.merchant_id}|${String(r.sku).toUpperCase()}`;\n  if (Number(r.qty) === 0 && prevSet.has(key)) {\n    newStockouts.push({ merchant_id: r.merchant_id, sku: r.sku, qty: 0 });\n  }\n}\nsd.newStockouts = newStockouts;\nconst duration_ms = Date.now() - (meta.startMs || Date.now());\nreturn [{\n  json: {\n    merchants_total: meta.merchantsTotal || 0,\n    merchants_ok: meta.merchantsOk || 0,\n    merchants_fail: meta.merchantsFail || 0,\n    rows_synced: rows.length,\n    new_stockouts: newStockouts.length,\n    new_stockout_list: newStockouts.slice(0, 20),\n    duration_ms,\n  },\n}];"
+      },
+      "id": "008a5430-c3b1-4837-bf63-eb5ce5d7281c",
+      "name": "Build Sync Stats",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3296,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.sync_runs (run_at, merchants_total, merchants_ok, rows_synced, new_stockouts, duration_ms)\nVALUES (\n  now(),\n  {{ $json.merchants_total }},\n  {{ $json.merchants_ok }},\n  {{ $json.rows_synced }},\n  {{ $json.new_stockouts }},\n  {{ $json.duration_ms }}\n);",
+        "options": {}
+      },
+      "id": "c9114b7f-f091-4fe7-b043-9df23c1ac3b1",
+      "name": "Record Sync Run",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        3520,
+        544
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "slow",
+              "leftValue": "={{ $('Build Sync Stats').item.json.too_slow }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6478e6b2-a12a-4f6a-aa14-f97b7caf001d",
+      "name": "Too Slow?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        4192,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "ISI_CHAT_ID",
+        "text": "=<b>H8Mart Ops · Sync slow</b>\nDuration ms: <code>{{ $('Build Sync Stats').item.json.duration_ms }}</code>\nMerchants ok: <code>{{ $('Build Sync Stats').item.json.merchants_ok }}</code>",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "ecc58e2d-75bd-4e79-8f4b-bf551402c8b5",
+      "name": "Alert Slow Sync",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        4416,
+        512
+      ],
+      "webhookId": "fc5cd4a4-654e-44f0-8602-70eb3e60ce9a",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "url": "http://uptime-kuma:3001/api/push/ISI_TOKEN_PUSH_KUMA?status=up&msg=OK&ping=",
+        "options": {}
+      },
+      "id": "689391b7-7dce-4705-90eb-fe4a9a1229f2",
+      "name": "Heartbeat Uptime Kuma",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4640,
+        544
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "order-created",
+        "authentication": "headerAuth",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "4dffa452-8344-4955-bbcd-172d4a0fb862",
+      "name": "Webhook order.created",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        384,
+        1248
+      ],
+      "webhookId": "order-created",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-WEBHOOK",
+          "name": "Header Auth Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nreturn [{ json: raw.body ?? raw }];"
+      },
+      "id": "b45a3c33-d0bc-4c32-b2ac-cc284b6a2836",
+      "name": "Normalize Body",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.event }}",
+              "rightValue": "order.created",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            },
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.order_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "c3",
+              "leftValue": "={{ $json.merchant_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            },
+            {
+              "id": "c4",
+              "leftValue": "={{ ($json.items || []).length }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "0a96d4f8-5413-4711-a17e-08b6770e54d4",
+      "name": "Event Valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        832,
+        1248
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: 'invalid_event' } }}",
+        "options": {
+          "responseCode": 422
+        }
+      },
+      "id": "10f02187-3af3-40be-8d4e-e5ac4c187e59",
+      "name": "Respond 422 Invalid",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        1056,
+        1344
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $input.first().json;\nconst items = Array.isArray(body.items) ? body.items : [];\nconst itemsNormalized = items.map((i) => ({\n  sku: String(i.sku).toUpperCase(),\n  qty: Number(i.qty),\n}));\nreturn [{ json: { ...body, items_normalized: itemsNormalized } }];"
+      },
+      "id": "876e533e-43b1-4c1c-9875-d6e7ab9b8f2f",
+      "name": "Prepare Stock Check",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "items_normalized",
+        "options": {}
+      },
+      "id": "39cb3cf9-4e0f-4e54-bd00-d796bfce59c4",
+      "name": "Split Items",
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        1280,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT p.sku, COALESCE(ms.qty, 0)::int AS qty_available\nFROM core.products p\nLEFT JOIN core.merchant_stock ms\n  ON ms.product_id = p.product_id\n AND ms.merchant_id = '{{ $('Prepare Stock Check').item.json.merchant_id }}'\nWHERE p.sku = '{{ $json.sku }}';",
+        "options": {}
+      },
+      "id": "26c77968-d80a-4852-b205-59129f6dd08d",
+      "name": "Check Stock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1504,
+        1152
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const order = $('Prepare Stock Check').first().json;\nconst rows = $input.all().map((i) => i.json);\nconst bySku = {};\nfor (const r of rows) bySku[String(r.sku).toUpperCase()] = Number(r.qty_available);\n\n// Ambang stok tipis: stok tersedia cukup untuk order, tetapi sisa/stok saat ini <= 10\nconst TIPIS_MAX = 10;\nlet route = 'cukup';\nfor (const item of order.items_normalized) {\n  const avail = bySku[item.sku] ?? 0;\n  if (avail < item.qty) { route = 'habis'; break; }\n}\nif (route !== 'habis') {\n  for (const item of order.items_normalized) {\n    const avail = bySku[item.sku] ?? 0;\n    if (avail <= TIPIS_MAX) { route = 'tipis'; break; }\n  }\n}\nreturn [{ json: { ...order, stock_route: route, stock_tipis_threshold: TIPIS_MAX } }];"
+      },
+      "id": "23ae0b3f-e80f-4526-b1c1-2d951cf2c36b",
+      "name": "Route Stock",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1728,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.stock_route }}",
+                    "rightValue": "habis",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "habis"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.stock_route }}",
+                    "rightValue": "tipis",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "tipis"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.stock_route }}",
+                    "rightValue": "cukup",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "cukup"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "37814011-f164-490c-ab1d-bca7337b80d7",
+      "name": "Routing Stock Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1952,
+        1120
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: 'out_of_stock', order_id: $('Route Stock').item.json.order_id } }}",
+        "options": {
+          "responseCode": 409
+        }
+      },
+      "id": "8f693681-2a62-4406-bd10-d342ca19b63b",
+      "name": "Respond 409 Out of Stock",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2176,
+        960
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO core.orders (\n  order_id, customer_id, merchant_id, zone, order_date, created_at,\n  status, cancel_reason, total_amount, payment_status, customer_note\n)\nSELECT\n  '{{ $json.order_id }}',\n  '{{ $json.customer_id }}',\n  '{{ $json.merchant_id }}',\n  m.zone,\n  (now() AT TIME ZONE 'Asia/Jakarta')::date,\n  now(),\n  'active',\n  NULL,\n  {{ $json.total_amount }},\n  'captured',\n  {{ $json.customer_note ? `'${String($json.customer_note).replace(/'/g, \"''\")}'` : 'NULL' }}\nFROM core.merchants m\nWHERE m.merchant_id = '{{ $json.merchant_id }}'\nON CONFLICT (order_id) DO NOTHING;",
+        "options": {}
+      },
+      "id": "1ab5af27-2e60-4ad9-b72f-93ea2f271841",
+      "name": "Insert Order",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2176,
+        1152
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, status: 'accepted', order_id: $('Route Stock').item.json.order_id } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "bcacdb13-e86d-4a28-b462-8589669e926d",
+      "name": "Respond 200 Accepted",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        1152
+      ]
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cd5354e2-d3a0-4b19-8b77-3e97f476b3c0",
+      "name": "Schedule Digest 07:00",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        384,
+        1776
+      ],
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH d AS (SELECT hari_data_terakhir AS day FROM core.data_info LIMIT 1)\nSELECT\n  d.day AS report_date,\n  COUNT(*)::int AS orders_total,\n  COUNT(*) FILTER (WHERE o.status IN ('cancelled', 'failed'))::int AS cancelled_or_failed,\n  ROUND(COUNT(*) FILTER (WHERE o.status IN ('cancelled', 'failed'))::numeric / NULLIF(COUNT(*), 0), 4) AS cancel_rate,\n  COUNT(*) FILTER (WHERE o.status = 'delivered')::int AS delivered_total,\n  COUNT(*) FILTER (WHERE o.status = 'delivered' AND del.actual_minutes <= del.promised_minutes)::int AS delivered_on_time,\n  ROUND(\n    COUNT(*) FILTER (WHERE o.status = 'delivered' AND del.actual_minutes <= del.promised_minutes)::numeric\n    / NULLIF(COUNT(*) FILTER (WHERE o.status = 'delivered'), 0), 4\n  ) AS sla_on_time_rate\nFROM d\nLEFT JOIN core.orders o ON o.order_date = d.day\nLEFT JOIN core.deliveries del ON del.order_id = o.order_id\nGROUP BY d.day;",
+        "options": {}
+      },
+      "id": "4bd6f6ea-7b99-4313-bef3-5dbea3ac4903",
+      "name": "Compute Daily KPI",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        608,
+        1776
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "ISI_CHAT_ID",
+        "text": "={{ $json.digest_text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "2b21269a-9dfa-4ea5-9b82-383ce3ec0ad4",
+      "name": "Send Digest Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        2176,
+        1680
+      ],
+      "webhookId": "c6d45d25-2d54-49c0-85ca-9732cca33953",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO core.orders (\n  order_id, customer_id, merchant_id, zone, order_date, created_at,\n  status, cancel_reason, total_amount, payment_status, customer_note\n)\nSELECT\n  '{{ $json.order_id }}',\n  '{{ $json.customer_id }}',\n  '{{ $json.merchant_id }}',\n  m.zone,\n  (now() AT TIME ZONE 'Asia/Jakarta')::date,\n  now(),\n  'active',\n  NULL,\n  {{ $json.total_amount }},\n  'captured',\n  {{ $json.customer_note ? `'${String($json.customer_note).replace(/'/g, \"''\")}'` : 'NULL' }}\nFROM core.merchants m\nWHERE m.merchant_id = '{{ $json.merchant_id }}'\nON CONFLICT (order_id) DO NOTHING;",
+        "options": {}
+      },
+      "id": "b2262e63-03eb-4b8d-a8e2-0837d2aed0ed",
+      "name": "Insert Order Low Stock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2176,
+        1344
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, status: 'accepted_low_stock', warning: 'stok_tipis', order_id: $('Route Stock').item.json.order_id, threshold: $('Route Stock').item.json.stock_tipis_threshold } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "id": "e405afce-136b-41f4-aff1-590fe5df7c99",
+      "name": "Respond 200 Low Stock",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        2400,
+        1344
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT ms.merchant_id, p.sku, ms.qty::int AS qty\nFROM core.merchant_stock ms\nJOIN core.products p ON p.product_id = ms.product_id\nWHERE ms.qty > 0;",
+        "options": {}
+      },
+      "id": "59fed91a-4bae-413e-9ac7-18ecf6717965",
+      "name": "Snapshot Positive Stock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        832,
+        400
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nsd.prevPositive = $input.all().map((i) => ({\n  merchant_id: i.json.merchant_id,\n  sku: String(i.json.sku).toUpperCase(),\n  qty: Number(i.json.qty),\n}));\nreturn [{ json: { prev_positive: sd.prevPositive.length } }];"
+      },
+      "id": "5e444815-9e82-4317-97ca-c1e0f3c87ca5",
+      "name": "Store Stock Snapshot",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1056,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ns",
+              "leftValue": "={{ $('Build Sync Stats').item.json.new_stockouts }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "gt"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "037c49af-a4da-4c67-ad27-c83fee48b94b",
+      "name": "New Stockouts?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        3744,
+        544
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "ISI_CHAT_ID",
+        "text": "=<b>H8Mart Ops · New stockouts</b>\nCount: <code>{{ $('Build Sync Stats').item.json.new_stockouts }}</code>\nSample: <code>{{ JSON.stringify($('Build Sync Stats').item.json.new_stockout_list || []) }}</code>",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "c9f1c322-1112-4b3b-9650-ed85ddb36acc",
+      "name": "Alert New Stockouts",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        3968,
+        512
+      ],
+      "webhookId": "d7fdc765-f7c5-4379-96c1-837bdf4eee43",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "de",
+              "leftValue": "={{ Number($json.orders_total) }}",
+              "rightValue": 0,
+              "operator": {
+                "type": "number",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "e5de6101-820d-45c1-ab49-dca620e00717",
+      "name": "Digest Empty?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        832,
+        1776
+      ]
+    },
+    {
+      "parameters": {
+        "errorMessage": "Silent failure: digest kosong untuk hari data terakhir"
+      },
+      "id": "3649d099-5180-46cd-a7b2-bcf64aeb4209",
+      "name": "Fail Digest Empty",
+      "type": "n8n-nodes-base.stopAndError",
+      "typeVersion": 1,
+      "position": [
+        1056,
+        1872
+      ]
+    },
+    {
+      "parameters": {
+        "endpointUrl": "http://n8n:5678/mcp/h8mart-merchant-tools",
+        "tool": {
+          "__rl": true,
+          "value": "cancel_reasons",
+          "mode": "list",
+          "cachedResultName": "cancel_reasons"
+        },
+        "inputMode": "json",
+        "jsonInput": "={{ { merchant_id: $json.merchant_id, order_date: $json.order_date } }}",
+        "options": {}
+      },
+      "id": "81485cfb-cff3-41ff-97a2-d0967ea1ccf3",
+      "name": "MCP Client Cancel Reasons",
+      "type": "@n8n/n8n-nodes-langchain.mcpClient",
+      "typeVersion": 1,
+      "position": [
+        1504,
+        1680
+      ],
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH d AS (SELECT hari_data_terakhir AS day FROM core.data_info LIMIT 1)\nSELECT o.cancel_reason, COUNT(*)::int AS jumlah\nFROM d\nJOIN core.orders o ON o.order_date = d.day\nWHERE o.status IN ('cancelled', 'failed') AND o.cancel_reason IS NOT NULL\nGROUP BY o.cancel_reason\nORDER BY jumlah DESC\nLIMIT 3;",
+        "options": {}
+      },
+      "id": "b779b4ba-b1df-4c3e-8392-6f7866f529d9",
+      "name": "SQL Mirror Cancel Reasons",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1728,
+        1680
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const kpi = $('Compute Daily KPI').first().json;\nconst spot = $('Prepare MCP Cancel Args').first().json;\nconst reasons = $input.all().map((i) => i.json);\nconst NL = String.fromCharCode(10);\n\nfunction esc(s) {\n  return String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');\n}\n\nfunction code(s) {\n  return '<code>' + esc(s) + '</code>';\n}\n\nfunction labelReason(codeText) {\n  return String(codeText || '').replace(/_/g, ' ');\n}\n\nfunction pct(n) {\n  const x = Number(n);\n  if (!Number.isFinite(x)) return String(n ?? '-');\n  return (x <= 1 ? x * 100 : x).toFixed(1) + '%';\n}\n\nfunction reasonRowsFromMcp(value, out) {\n  if (value == null) return;\n  if (typeof value === 'string') {\n    try { reasonRowsFromMcp(JSON.parse(value), out); } catch (e) {}\n    return;\n  }\n  if (Array.isArray(value)) {\n    for (const x of value) reasonRowsFromMcp(x, out);\n    return;\n  }\n  if (typeof value === 'object') {\n    if (value.cancel_reason != null) {\n      out.push({ cancel_reason: value.cancel_reason, jumlah: value.jumlah ?? '?' });\n      return;\n    }\n    if (value.content != null) reasonRowsFromMcp(value.content, out);\n    if (value.text != null) reasonRowsFromMcp(value.text, out);\n    if (value.json != null) reasonRowsFromMcp(value.json, out);\n    if (value.data != null) reasonRowsFromMcp(value.data, out);\n  }\n}\n\nconst allRows = reasons.filter((r) => r.cancel_reason != null).slice(0, 3);\n\nlet mcpRows = [];\ntry {\n  for (const item of $('MCP Client Cancel Reasons').all()) {\n    reasonRowsFromMcp(item.json, mcpRows);\n  }\n  mcpRows = mcpRows.slice(0, 3);\n} catch (e) {}\n\nconst reportDate = String(kpi.report_date || spot.order_date || '').slice(0, 10);\n\nconst digest_text = [\n  '<b>H8Mart Ops · Daily Digest</b>',\n  '',\n  'Date: ' + code(reportDate),\n  'Orders: ' + code(kpi.orders_total),\n  'Cancel rate: ' + code(pct(kpi.cancel_rate)),\n  'On-time delivery: ' + code(pct(kpi.sla_on_time_rate)) + ' (' + code(kpi.delivered_on_time) + ' of ' + code(kpi.delivered_total) + ')',\n  '',\n  '<b>Top cancel reasons (all merchants)</b>',\n  allRows.length\n    ? allRows.map((r) => '• ' + esc(labelReason(r.cancel_reason)) + ' — ' + code(r.jumlah)).join(NL)\n    : '• none',\n  '',\n  '<b>Highest cancel volume: ' + code(spot.merchant_id) + '</b>',\n  mcpRows.length\n    ? mcpRows.map((r) => '• ' + esc(labelReason(r.cancel_reason)) + ' — ' + code(r.jumlah)).join(NL)\n    : '• none',\n].join(NL);\n\nreturn [{\n  json: {\n    ...kpi,\n    report_date: reportDate,\n    top_cancel_reasons: allRows.map((r) => r.cancel_reason + ': ' + r.jumlah).join(' | ') || 'n/a',\n    digest_text,\n  },\n}];"
+      },
+      "id": "5bf246eb-7cf5-42ac-9635-5f84ceddbad5",
+      "name": "Add Reasons to Digest",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1952,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/notify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { channel: 'ops-digest', title: 'H8Mart Ops Daily Digest', text: $json.digest_text } }}",
+        "options": {}
+      },
+      "id": "148ec32a-cf36-4108-b1a8-388ad5926a85",
+      "name": "Send Digest Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2400,
+        1680
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/notify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { channel: 'ops-alerts', title: 'H8Mart Ops · Sync dead-letter', text: `Merchant stock API failed after retries. business_key=${$('Loop Merchants').item.json.merchant_id}; node=Ambil Stok Merchant API; time_wib=${$now.setZone('Asia/Jakarta').toFormat('yyyy-LL-dd HH:mm:ss')}` } }}",
+        "options": {}
+      },
+      "id": "26a3a8aa-b803-4bd0-83c7-cc7748c5a00b",
+      "name": "Alert Merchant Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2848,
+        320
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH d AS (SELECT hari_data_terakhir AS day FROM core.data_info LIMIT 1),\nranked AS (\n  SELECT o.merchant_id,\n         m.name AS merchant_name,\n         COUNT(*)::int AS cancel_fail_count,\n         d.day::text AS order_date\n  FROM d\n  JOIN core.orders o ON o.order_date = d.day\n  JOIN core.merchants m ON m.merchant_id = o.merchant_id\n  WHERE o.status IN ('cancelled', 'failed')\n  GROUP BY o.merchant_id, m.name, d.day\n  ORDER BY cancel_fail_count DESC, o.merchant_id\n  LIMIT 1\n)\nSELECT\n  coalesce((SELECT merchant_id FROM ranked), 'M001') AS merchant_id,\n  coalesce((SELECT merchant_name FROM ranked), 'fallback') AS merchant_name,\n  coalesce((SELECT cancel_fail_count FROM ranked), 0)::int AS cancel_fail_count,\n  coalesce((SELECT order_date FROM ranked), (SELECT day::text FROM d)) AS order_date;",
+        "options": {}
+      },
+      "id": "022324cd-7e18-4538-a29c-1f9886861f36",
+      "name": "Pick Top Cancel Merchant",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1056,
+        1680
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const kpi = $('Compute Daily KPI').first().json;\nconst row = $input.first().json || {};\nconst rawDate = String(row.order_date || kpi.report_date || '');\nconst order_date = (rawDate.match(/^\\d{4}-\\d{2}-\\d{2}/) || [rawDate.slice(0, 10)])[0];\nreturn [{\n  json: {\n    merchant_id: String(row.merchant_id || 'M001'),\n    order_date,\n    merchant_name: row.merchant_name || row.merchant_id || 'M001',\n    cancel_fail_count: Number(row.cancel_fail_count || 0),\n  },\n}];"
+      },
+      "id": "45c1cb01-4c3d-40f3-aa72-998e0792aa78",
+      "name": "Prepare MCP Cancel Args",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        1680
+      ]
+    },
+    {
+      "parameters": {
+        "content": "## WF1 · Stock Sync, Order, Digest\n\nTimezone: Asia/Jakarta · Error Workflow: WF5\n\n- **A** Sync every 15m (+ new stockouts)\n- **B** Order intake: 200 / low-stock / 409 / 422 · idempotent\n- **C** Digest 07:00 · empty-digest fail · MCP cancel reasons",
+        "height": 144,
+        "width": 432,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        288,
+        -112
+      ],
+      "id": "e2c117d0-4a4f-48a0-bfca-c810b3b1197a",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "content": "## Path A · Sync (15 minutes)\n\n- Retry On Fail per merchant\n- Normalize → Merge catalog → upsert (~205 rows)\n- Record sync run · Kuma heartbeat\n- Permanent fail → dead-letter + Telegram (+ Notification ops-alerts)",
+        "height": 832,
+        "width": 4560
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        288,
+        64
+      ],
+      "id": "362bd6af-8d90-4437-993e-32e9fbdf1c07",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "content": "## Path B · Order intake\n\n- 200 accepted · 200 accepted_low_stock (≤10)\n- 409 out of stock · 422 invalid\n- ON CONFLICT (order_id) → no duplicate rows",
+        "height": 592,
+        "width": 2528,
+        "color": 5
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        288,
+        928
+      ],
+      "id": "beca1d18-eb8d-4b5e-ad02-c11d4aec81d0",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "content": "## Path C · Daily digest (07:00 WIB)\n\n- KPI for last data day\n- Empty digest → controlled failure\n- Top cancel reasons via MCP + SQL mirror\n- Telegram + Notification (ops-digest)",
+        "height": 480,
+        "width": 2528,
+        "color": 2
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        288,
+        1552
+      ],
+      "id": "4ee83bbe-363f-49a5-919b-d75135db95a7",
+      "name": "Sticky Note3"
+    },
+    {
+      "parameters": {
+        "content": "## MCP in digest\n\n1. Pick Top Cancel Merchant (most cancel/fail that day)\n2. MCP Client → WF2 `cancel_reasons` (that merchant_id + order_date)\n3. SQL Mirror = platform-wide top reasons for the message\nPublish WF2 before connecting the client.",
+        "height": 176,
+        "width": 400,
+        "color": 3
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        1248,
+        1840
+      ],
+      "id": "6d6bb39b-f8af-4fee-90ce-26ea62826bae",
+      "name": "Sticky Note4"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Init Sync Collect": {
+      "main": [
+        [
+          {
+            "node": "Snapshot Positive Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "List Merchants": {
+      "main": [
+        [
+          {
+            "node": "Count Merchants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Merchants": {
+      "main": [
+        [
+          {
+            "node": "Loop Merchants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Merchants": {
+      "main": [
+        [
+          {
+            "node": "Normalize Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Fetch Merchant Stock API",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Merchant Stock API": {
+      "main": [
+        [
+          {
+            "node": "Collect Merchant Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dead Letter Merchant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Merchant Stock": {
+      "main": [
+        [
+          {
+            "node": "Loop Merchants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Stock": {
+      "main": [
+        [
+          {
+            "node": "Sync Empty?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Product Catalog": {
+      "main": [
+        [
+          {
+            "node": "Merge Catalog",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Merge Catalog": {
+      "main": [
+        [
+          {
+            "node": "Upsert Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Sync Stats": {
+      "main": [
+        [
+          {
+            "node": "Record Sync Run",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Body": {
+      "main": [
+        [
+          {
+            "node": "Event Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Stock Check": {
+      "main": [
+        [
+          {
+            "node": "Split Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Stock": {
+      "main": [
+        [
+          {
+            "node": "Route Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Route Stock": {
+      "main": [
+        [
+          {
+            "node": "Routing Stock Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Sync 15m": {
+      "main": [
+        [
+          {
+            "node": "Init Sync Collect",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Dead Letter Merchant": {
+      "main": [
+        [
+          {
+            "node": "Count Fail",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Count Fail": {
+      "main": [
+        [
+          {
+            "node": "Alert Merchant Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Merchant Failed": {
+      "main": [
+        [
+          {
+            "node": "Alert Merchant Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sync Empty?": {
+      "main": [
+        [
+          {
+            "node": "Fail Sync 0 Rows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Merge Catalog",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Trigger Catalog Once",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Trigger Catalog Once": {
+      "main": [
+        [
+          {
+            "node": "Load Product Catalog",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Stock": {
+      "main": [
+        [
+          {
+            "node": "Build Sync Stats",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Sync Run": {
+      "main": [
+        [
+          {
+            "node": "New Stockouts?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Too Slow?": {
+      "main": [
+        [
+          {
+            "node": "Alert Slow Sync",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Heartbeat Uptime Kuma",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Slow Sync": {
+      "main": [
+        [
+          {
+            "node": "Heartbeat Uptime Kuma",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook order.created": {
+      "main": [
+        [
+          {
+            "node": "Normalize Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Valid?": {
+      "main": [
+        [
+          {
+            "node": "Prepare Stock Check",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond 422 Invalid",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split Items": {
+      "main": [
+        [
+          {
+            "node": "Check Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Routing Stock Switch": {
+      "main": [
+        [
+          {
+            "node": "Respond 409 Out of Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Order Low Stock",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Insert Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Order": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Schedule Digest 07:00": {
+      "main": [
+        [
+          {
+            "node": "Compute Daily KPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compute Daily KPI": {
+      "main": [
+        [
+          {
+            "node": "Digest Empty?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Order Low Stock": {
+      "main": [
+        [
+          {
+            "node": "Respond 200 Low Stock",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Snapshot Positive Stock": {
+      "main": [
+        [
+          {
+            "node": "Store Stock Snapshot",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Stock Snapshot": {
+      "main": [
+        [
+          {
+            "node": "List Merchants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "New Stockouts?": {
+      "main": [
+        [
+          {
+            "node": "Alert New Stockouts",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Too Slow?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert New Stockouts": {
+      "main": [
+        [
+          {
+            "node": "Too Slow?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Digest Empty?": {
+      "main": [
+        [
+          {
+            "node": "Fail Digest Empty",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Pick Top Cancel Merchant",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "MCP Client Cancel Reasons": {
+      "main": [
+        [
+          {
+            "node": "SQL Mirror Cancel Reasons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SQL Mirror Cancel Reasons": {
+      "main": [
+        [
+          {
+            "node": "Add Reasons to Digest",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Add Reasons to Digest": {
+      "main": [
+        [
+          {
+            "node": "Send Digest Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Digest Telegram": {
+      "main": [
+        [
+          {
+            "node": "Send Digest Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert Merchant Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Merchants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pick Top Cancel Merchant": {
+      "main": [
+        [
+          {
+            "node": "Prepare MCP Cancel Args",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare MCP Cancel Args": {
+      "main": [
+        [
+          {
+            "node": "MCP Client Cancel Reasons",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qOQaMNHKgz8I2f8v",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "a0856492-5696-4420-9625-0cf8bafd716f",
+  "meta": {
+    "instanceId": "0da252a50a13f49b3f353674ee8665d9ab321e699d76583d48ec62f67cb8c0eb"
+  },
+  "nodeGroups": [],
+  "id": "xW2yMhvbQR55TxmE",
+  "tags": []
+}

@@ -1,0 +1,292 @@
+{
+  "name": "WF3b Telegram Assistant Chat (Full)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## WF3b · Telegram chat\n\nNeeds VPS HTTPS (Telegram Trigger).\n\n1. Receive message\n2. Allowlist `ops.telegram_merchants`\n3. Allowed → POST WF3 webhook (`merchant_id` from DB)\n4. Reply in chat\n5. Unknown chat → polite reject (no agent)",
+        "height": 460,
+        "width": 1600,
+        "color": 2
+      },
+      "id": "0e50f9f2-db40-4587-9cdc-30fe611cc147",
+      "name": "Note · Telegram Chat",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        240,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "updates": [
+          "message"
+        ],
+        "additionalFields": {}
+      },
+      "id": "10451f36-7d73-4bd4-b313-2acfdf13de64",
+      "name": "Telegram Trigger",
+      "type": "n8n-nodes-base.telegramTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        320,
+        304
+      ],
+      "webhookId": "wf3b-telegram",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const msg = $input.first().json;\nconst chatId = msg.message?.chat?.id ?? msg.chat?.id;\nconst text = (msg.message?.text ?? msg.text ?? '').trim();\nreturn [{ json: { chat_id: chatId, question: text, from_id: msg.message?.from?.id ?? null } }];"
+      },
+      "id": "b2b0d94e-89df-4faa-a644-d06176e6fdd5",
+      "name": "Extract Chat and Question",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT chat_id, merchant_id, label FROM ops.telegram_merchants WHERE chat_id = {{ $json.chat_id }} LIMIT 1;",
+        "options": {}
+      },
+      "id": "e8f45abe-326a-4228-988c-ee603f33951b",
+      "name": "Check Allowlist",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        768,
+        304
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "al",
+              "leftValue": "={{ $json.registered }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "6219e46d-758a-47a5-95b4-ba844ea991c3",
+      "name": "Chat Registered?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1216,
+        304
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://n8n:5678/webhook/merchant-assistant",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ merchant_id: $json.merchant_id, question: $('Extract Chat and Question').item.json.question }) }}",
+        "options": {}
+      },
+      "id": "4ee3c593-5d00-41d0-9aba-3c045a42aa18",
+      "name": "Call WF3 Assistant",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-WEBHOOK",
+          "name": "Header Auth Webhook"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Chat and Question').item.json.chat_id }}",
+        "text": "={{ '<b>H8Mart Assistant</b>\\n' + ($json.jawaban || $json.message || 'Sorry, something went wrong. CS will follow up.') }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "d9f10192-5a89-4da9-9340-933be73e416d",
+      "name": "Send Reply to Chat",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1664,
+        208
+      ],
+      "webhookId": "36c5223e-b654-4fae-a20b-b611909e271e",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Extract Chat and Question').item.json.chat_id }}",
+        "text": "<b>H8Mart Ops</b>\nThis Telegram account is not registered as a merchant. Contact Ops to activate access.",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "96780841-3820-4853-a1b8-2d0f920581e0",
+      "name": "Reject Unknown Chat",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1440,
+        400
+      ],
+      "webhookId": "f61aeb74-c24f-499e-9efd-580cb7816ef8",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const q = $('Extract Chat and Question').first().json;\nconst rows = $input.all().map((i) => i.json).filter((r) => r && r.merchant_id);\nif (!rows.length) {\n  return [{ json: { ...q, merchant_id: null, registered: false } }];\n}\nreturn [{ json: { ...q, merchant_id: rows[0].merchant_id, label: rows[0].label, registered: true } }];"
+      },
+      "id": "9b494ed0-deb9-470c-803c-b05f6a28ecba",
+      "name": "Normalize Allowlist",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        992,
+        304
+      ]
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Telegram Trigger": {
+      "main": [
+        [
+          {
+            "node": "Extract Chat and Question",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract Chat and Question": {
+      "main": [
+        [
+          {
+            "node": "Check Allowlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Allowlist": {
+      "main": [
+        [
+          {
+            "node": "Normalize Allowlist",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Chat Registered?": {
+      "main": [
+        [
+          {
+            "node": "Call WF3 Assistant",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Reject Unknown Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF3 Assistant": {
+      "main": [
+        [
+          {
+            "node": "Send Reply to Chat",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Allowlist": {
+      "main": [
+        [
+          {
+            "node": "Chat Registered?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qOQaMNHKgz8I2f8v",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "ca55f979-276f-4d0d-bab7-c81a22893a46",
+  "meta": {
+    "instanceId": "0da252a50a13f49b3f353674ee8665d9ab321e699d76583d48ec62f67cb8c0eb"
+  },
+  "nodeGroups": [],
+  "id": "mpv9lohja4gChOUa",
+  "tags": []
+}

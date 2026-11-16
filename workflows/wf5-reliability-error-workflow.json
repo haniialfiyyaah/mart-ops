@@ -1,0 +1,145 @@
+{
+  "name": "WF5 Reliability Error Workflow (Full)",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "a9a27b12-a383-4041-ba02-ea60b0412109",
+      "name": "Error Trigger",
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        80,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\n\nconst workflowName = raw.workflow?.name ?? 'unknown';\nconst nodeName =\n  raw.execution?.lastNodeExecuted ??\n  raw.node?.name ??\n  'unknown';\nconst when = new Date().toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' });\nconst executionId = raw.execution?.id ?? '-';\nconst errorMessage =\n  raw.execution?.error?.message ??\n  raw.message ??\n  '-';\n\nfunction findBusinessKey(obj, depth = 0) {\n  if (!obj || typeof obj !== 'object' || depth > 5) return null;\n  if (obj.order_id) return String(obj.order_id);\n  if (obj.merchant_id) return String(obj.merchant_id);\n  if (obj.business_key) return String(obj.business_key);\n  for (const value of Object.values(obj)) {\n    if (value && typeof value === 'object') {\n      const found = findBusinessKey(value, depth + 1);\n      if (found) return found;\n    }\n  }\n  return null;\n}\n\nfunction esc(s) {\n  return String(s)\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;');\n}\n\nconst businessKey = findBusinessKey(raw) ?? '-';\n\nconst text = [\n  '<b>H8Mart Ops · Alert</b>',\n  '',\n  `Workflow: <code>${esc(workflowName)}</code>`,\n  `Node: <code>${esc(nodeName)}</code>`,\n  `Time (WIB): <code>${esc(when)}</code>`,\n  `Business key: <code>${esc(businessKey)}</code>`,\n  `Execution: <code>${esc(executionId)}</code>`,\n  '',\n  `Error: <code>${esc(errorMessage)}</code>`,\n].join('\\n');\n\nreturn [{\n  json: {\n    text,\n    workflowName,\n    nodeName,\n    when,\n    businessKey,\n    executionId,\n    errorMessage,\n  },\n}];"
+      },
+      "id": "d40de741-8f43-4021-8d9d-5219d3ddfa7c",
+      "name": "Build Alert Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        304,
+        272
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "ISI_CHAT_ID",
+        "text": "={{ $json.text }}",
+        "additionalFields": {
+          "appendAttribution": false,
+          "parse_mode": "HTML"
+        }
+      },
+      "id": "e0f926d4-2ad0-4f90-8b4b-74b3c6c83d55",
+      "name": "Send Alert Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        528,
+        272
+      ],
+      "webhookId": "e8950c1b-7750-4f90-9c9b-63c68573ec33",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "## WF5 · Central Error Workflow\n\nSet as Error Workflow on WF1–WF4.\n\n1. Error Trigger\n2. Build alert (workflow, node, time WIB, business key)\n3. Telegram alert (required)\n4. Notification API → `ops-alerts`\n\nSilent-fail / Kuma / slow-sync live on WF1.",
+        "height": 368,
+        "width": 1020,
+        "color": 5
+      },
+      "id": "b6c9ed45-b47e-4383-a39e-53c55fb9c745",
+      "name": "Note · Error Workflow",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -48,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/notify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { channel: 'ops-alerts', title: 'H8Mart Ops Alert', text: $json.text } }}",
+        "options": {}
+      },
+      "id": "cb9eedf2-6927-4030-b5ad-dc6fa5ad3cc3",
+      "name": "Send Alert Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        752,
+        272
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger": {
+      "main": [
+        [
+          {
+            "node": "Build Alert Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Alert Message": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert Telegram": {
+      "main": [
+        [
+          {
+            "node": "Send Alert Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "668265f7-e13c-4e1a-ba73-695d3940cd80",
+  "meta": {
+    "instanceId": "0da252a50a13f49b3f353674ee8665d9ab321e699d76583d48ec62f67cb8c0eb"
+  },
+  "nodeGroups": [],
+  "id": "qOQaMNHKgz8I2f8v",
+  "tags": []
+}

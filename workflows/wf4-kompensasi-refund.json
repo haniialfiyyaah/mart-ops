@@ -1,0 +1,712 @@
+{
+  "name": "WF4 Compensation Refund (Full)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "## WF4 · Compensation & Refund\n\nWebhook: `delivery.late` · `order.failed` (Header Auth)\n\nPolicy:\n- Late voucher auto: Rp10k / Rp25k (≥20 min late)\n- Refund = `total_amount`; ≥ Rp100k → Ops Telegram approval\n- Idempotency-Key + ON CONFLICT (event once)\n- Decline → no Payment call\n- Payment retryOnFail; hard fail → dead-letter\n\nVPS approval: Approve Within Chat + Show Outcome.",
+        "height": 696,
+        "width": 2752,
+        "color": "#593A3A"
+      },
+      "id": "a3dfa87f-e58d-4bab-a265-a67ece1841af",
+      "name": "Note · Compensation & Refund",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        208,
+        64
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const raw = $input.first().json;\nconst body = raw.body ?? raw;\nreturn [{ json: body }];"
+      },
+      "id": "95825497-9b0b-4649-8661-167f4a883b2e",
+      "name": "Normalize Event",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        528,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT order_id, merchant_id, total_amount, payment_status, status\nFROM core.orders\nWHERE order_id = '{{ $json.order_id }}';",
+        "options": {}
+      },
+      "id": "be8d7321-5b98-448e-bdc3-307fe84e141e",
+      "name": "Load Order",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        752,
+        352
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-READER",
+          "name": "PG mcp_reader"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const event = $('Normalize Event').first().json;\nconst order = $input.first().json;\nconst REFUND_APPROVAL_THRESHOLD = 100000;\nconst LATE_HEAVY = 20;\n\nlet kind = 'ignore';\nlet amount = 0;\nlet needsApproval = false;\n\nif (event.event === 'delivery.late') {\n  kind = 'voucher';\n  const late = Number(event.minutes_late || 0);\n  amount = late >= LATE_HEAVY ? 25000 : 10000;\n} else if (event.event === 'order.failed') {\n  if (order.payment_status !== 'captured') {\n    kind = 'skip_unpaid';\n  } else {\n    kind = 'refund';\n    amount = Number(order.total_amount);\n    needsApproval = amount >= REFUND_APPROVAL_THRESHOLD;\n  }\n}\n\nconst idempotencyKey = `${kind}:${event.order_id}`;\n\nreturn [{\n  json: {\n    ...event,\n    ...order,\n    kind,\n    amount,\n    needsApproval,\n    idempotencyKey,\n  },\n}];"
+      },
+      "id": "45ca1d5f-d1ce-4c50-89a3-0f7cc606fa7d",
+      "name": "Apply Policy",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        976,
+        352
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "voucher",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "voucher"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 2
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.kind }}",
+                    "rightValue": "refund",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "refund"
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "2332d6dc-3aba-408d-92c2-191e4077d405",
+      "name": "Event Kind Switch",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1200,
+        336
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.compensations (order_id, kind, amount, idempotency_key, status)\nVALUES (\n  '{{ $json.order_id }}',\n  'late_voucher',\n  {{ $json.amount }},\n  '{{ $json.idempotencyKey }}',\n  'pending'\n)\nON CONFLICT (idempotency_key) DO NOTHING\nRETURNING *;",
+        "options": {}
+      },
+      "id": "fe1ed103-7d43-4475-a334-8188c4ee61c5",
+      "name": "Record Voucher",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1424,
+        208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/payments/vouchers",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Apply Policy').item.json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { order_id: $('Apply Policy').item.json.order_id, amount: $('Apply Policy').item.json.amount } }}",
+        "options": {}
+      },
+      "id": "cff4f256-3435-4944-b106-fbb7467e84a9",
+      "name": "Payment Issue Voucher",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1648,
+        208
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ops.compensations\nSET status = 'issued',\n    payment_ref = '{{ $json.voucher_id || $json.refund_id || \"\" }}'\nWHERE idempotency_key = '{{ $('Apply Policy').item.json.idempotencyKey }}';",
+        "options": {}
+      },
+      "id": "71772fff-390d-456d-a644-af995a613d00",
+      "name": "Mark Voucher Issued",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1872,
+        208
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/notify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { channel: 'push', title: 'Late voucher', text: `Voucher for ${$('Apply Policy').item.json.order_id}` } }}",
+        "options": {}
+      },
+      "id": "0f250306-152d-45c7-8253-492b70df7a0f",
+      "name": "Notify Voucher",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2096,
+        208
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.refund_actions (order_id, idempotency_key, amount, status)\nVALUES (\n  '{{ $json.order_id }}',\n  '{{ $json.idempotencyKey }}',\n  {{ $json.amount }},\n  '{{ $json.needsApproval ? \"pending_approval\" : \"approved\" }}'\n)\nON CONFLICT (idempotency_key) DO NOTHING\nRETURNING *;",
+        "options": {}
+      },
+      "id": "ddbf5001-a9ad-4451-acff-80fe99d1550e",
+      "name": "Record Refund Proposal",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1424,
+        448
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "loose",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "appr",
+              "leftValue": "={{ $('Apply Policy').item.json.needsApproval }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "a2b1f307-3fe0-4a4d-8316-061dadd4c443",
+      "name": "Needs Approval?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1648,
+        448
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "ok",
+              "leftValue": "={{ $json.data.approved }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "08095fc7-c7aa-4a3c-be04-d118d8f82d82",
+      "name": "Approved?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2096,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ops.refund_actions\nSET status = 'rejected', approved_by = 'ops'\nWHERE idempotency_key = '{{ $('Apply Policy').item.json.idempotencyKey }}';",
+        "options": {}
+      },
+      "id": "5f7d5855-4a8b-4ffe-80ea-e33db8533fcf",
+      "name": "Mark Rejected",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2320,
+        592
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/payments/refunds",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Idempotency-Key",
+              "value": "={{ $('Apply Policy').item.json.idempotencyKey }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { order_id: $('Apply Policy').item.json.order_id, amount: $('Apply Policy').item.json.amount } }}",
+        "options": {}
+      },
+      "id": "8230d3f6-51a1-4a07-88f1-10099a2bd2d8",
+      "name": "Payment Refund",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2320,
+        400
+      ],
+      "retryOnFail": true,
+      "maxTries": 3,
+      "waitBetweenTries": 1000,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE ops.refund_actions\nSET status = 'refunded',\n    approved_by = 'ops',\n    payment_ref = '{{ $json.refund_id || \"\" }}'\nWHERE idempotency_key = '{{ $('Apply Policy').item.json.idempotencyKey }}';",
+        "options": {}
+      },
+      "id": "cc942ea0-1551-4928-a16a-4a1137f50c16",
+      "name": "Mark Refunded",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2544,
+        352
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO ops.dead_letter (\n  workflow, node, execution_id, business_key, error_message, payload, attempts, status\n) VALUES (\n  'WF4 Compensation Refund',\n  'Payment Refund',\n  '{{ $execution.id }}',\n  '{{ $('Apply Policy').item.json.order_id }}',\n  '{{ $json.error?.message || $json.message || \"payment_failed\" }}',\n  '{{ JSON.stringify($json).replace(/'/g, \"''\") }}'::jsonb,\n  3,\n  'open'\n);",
+        "options": {}
+      },
+      "id": "2822a0c3-e4b2-4ec1-8773-eacd3e646f99",
+      "name": "Dead Letter Payment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2544,
+        544
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "GANTI-ID-PG-WRITER",
+          "name": "PG ops_writer"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://mock-api:8080/notify",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { channel: 'push', title: 'Refund issued', text: `Refund for ${$('Apply Policy').item.json.order_id} amount ${$('Apply Policy').item.json.amount}` } }}",
+        "options": {}
+      },
+      "id": "72cb434d-e683-427a-b787-604f831e93d1",
+      "name": "Notify Refund",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2768,
+        352
+      ],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-MOCK-API",
+          "name": "Header Auth Mock API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "sendAndWait",
+        "chatId": "ISI_CHAT_ID",
+        "message": "=*H8Mart Ops · Refund approval needed*\nOrder: `{{ $('Apply Policy').item.json.order_id }}`\nAmount: `{{ $('Apply Policy').item.json.amount }}`",
+        "approvalOptions": {
+          "values": {
+            "approvalType": "double"
+          }
+        },
+        "chatApproval": true,
+        "options": {
+          "appendAttribution": false
+        }
+      },
+      "id": "a7be399f-057b-482f-a286-31ef30eebaa5",
+      "name": "Ask Approval Telegram",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        1872,
+        400
+      ],
+      "webhookId": "wf4-telegram-approval",
+      "credentials": {
+        "telegramApi": {
+          "id": "GANTI-ID-TELEGRAM",
+          "name": "Telegram H8Mart Ops"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "ops-events",
+        "authentication": "headerAuth",
+        "responseMode": "lastNode",
+        "options": {}
+      },
+      "id": "5ffc09ad-d74e-4ab7-83c1-d72108d42849",
+      "name": "Webhook Ops Events",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        304,
+        352
+      ],
+      "webhookId": "ops-events",
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "GANTI-ID-WEBHOOK",
+          "name": "Header Auth Webhook"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Normalize Event": {
+      "main": [
+        [
+          {
+            "node": "Load Order",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Order": {
+      "main": [
+        [
+          {
+            "node": "Apply Policy",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Policy": {
+      "main": [
+        [
+          {
+            "node": "Event Kind Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Event Kind Switch": {
+      "main": [
+        [
+          {
+            "node": "Record Voucher",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Record Refund Proposal",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Voucher": {
+      "main": [
+        [
+          {
+            "node": "Payment Issue Voucher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payment Issue Voucher": {
+      "main": [
+        [
+          {
+            "node": "Mark Voucher Issued",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Voucher Issued": {
+      "main": [
+        [
+          {
+            "node": "Notify Voucher",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Record Refund Proposal": {
+      "main": [
+        [
+          {
+            "node": "Needs Approval?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs Approval?": {
+      "main": [
+        [
+          {
+            "node": "Ask Approval Telegram",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Payment Refund",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Approved?": {
+      "main": [
+        [
+          {
+            "node": "Payment Refund",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Rejected",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Payment Refund": {
+      "main": [
+        [
+          {
+            "node": "Mark Refunded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Dead Letter Payment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Refunded": {
+      "main": [
+        [
+          {
+            "node": "Notify Refund",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ask Approval Telegram": {
+      "main": [
+        [
+          {
+            "node": "Approved?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Ops Events": {
+      "main": [
+        [
+          {
+            "node": "Normalize Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed",
+    "errorWorkflow": "qOQaMNHKgz8I2f8v",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": false
+  },
+  "versionId": "72427212-61e8-432c-a5da-86e42e810fb1",
+  "meta": {
+    "instanceId": "0da252a50a13f49b3f353674ee8665d9ab321e699d76583d48ec62f67cb8c0eb"
+  },
+  "nodeGroups": [],
+  "id": "k4ARfLH5bfRbNHYJ",
+  "tags": []
+}
