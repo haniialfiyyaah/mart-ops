@@ -1,0 +1,17 @@
+# Production smoke — from laptop (outside VPS)
+# Date: 2026-11-16
+# Token redacted — do not commit real X-H8Mart-Token values
+
+$ curl -s -i -X POST "https://h8mart-hani.duckdns.org/webhook/order-created" \
+    -H "X-H8Mart-Token: ***" \
+    -H "Content-Type: application/json" \
+    -d @fixtures/event-order-created-ok.json
+
+HTTP/2 200
+via: 1.1 Caddy
+content-type: application/json; charset=utf-8
+
+{"ok":true,"status":"accepted_low_stock","warning":"stok_tipis","order_id":"HM-TEST-001","threshold":10}
+
+# Note: 200 + accepted_low_stock is a valid accept path (stok tipis).
+# Proves HTTPS Production URL reachable from outside the VPS.
