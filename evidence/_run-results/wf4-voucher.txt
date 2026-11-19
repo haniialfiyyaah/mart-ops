@@ -1,0 +1,11 @@
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-security-policy: sandbox allow-downloads allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-top-navigation-by-user-activation allow-top-navigation-to-custom-protocols
+content-type: application/json; charset=utf-8
+date: Thu, 19 Nov 2026 14:30:42 GMT
+etag: W/"79-MgFg4uyyCVfscw/wr+sHIoJ9Q9U"
+vary: Accept-Encoding
+via: 1.1 Caddy
+content-length: 121
+
+{"id":18,"channel":"push","title":"Late voucher","text":"Voucher for HM-SP-001","received_at":"2026-11-19T14:30:42.732Z"}

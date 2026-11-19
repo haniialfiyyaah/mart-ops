@@ -1,0 +1,9 @@
+{
+  "status": "dijawab",
+  "jawaban": "Cancel rate toko Anda kemarin (12 November 2026) adalah 7,69% (1 dari 13 pesanan).",
+  "data_dipakai": [
+    "KPI M002 pada 2026-11-12: 13 pesanan, 1 dibatalkan/gagal; cancel rate 0.0769."
+  ],
+  "confidence": 1,
+  "perlu_eskalasi": false
+}

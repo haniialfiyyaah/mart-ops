@@ -1,0 +1,9 @@
+{
+  "status": "dijawab",
+  "jawaban": "Stok habis: Air Mineral 1,5 L (6 botol) (SKU-007) — 0 unit. Kandidat stok menipis: Pisang 1 sisir (SKU-021) — 5 unit; Daging Ayam Fillet 500 g (SKU-018) — 6 unit; Roti Tawar (SKU-015) — 7 unit. Ambang resmi stok menipis tidak tersedia, jadi ini kandidat berdasarkan jumlah rendah. Data stok disinkronkan 19 Nov 2026.",
+  "data_dipakai": [
+    "Stok Merchant M003; SKU, nama produk, dan qty; disinkronkan 2026-11-19T15:28:43.029Z"
+  ],
+  "confidence": 0.96,
+  "perlu_eskalasi": false
+}

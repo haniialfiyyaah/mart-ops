@@ -1,0 +1,9 @@
+{
+  "status": "dijawab",
+  "jawaban": "KPI Merchant M002 (Toko Segar Ciputat), 12 November 2026: total pesanan 13; batal/gagal 1 (tingkat pembatalan 7,69%); terkirim 12; tepat waktu 11 (SLA on-time 91,67%).",
+  "data_dipakai": [
+    "merchant_kpi M002 untuk 2026-11-12"
+  ],
+  "confidence": 1,
+  "perlu_eskalasi": false
+}

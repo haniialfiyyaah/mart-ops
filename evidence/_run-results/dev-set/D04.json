@@ -1,0 +1,12 @@
+{
+  "status": "dijawab",
+  "jawaban": "SLA pengantaran 30 menit kemarin (12 November 2026) tercapai untuk 10 dari 15 pesanan yang terkirim, yaitu 66,67%.",
+  "data_dipakai": [
+    "Merchant M012 — 12 November 2026",
+    "Pesanan terkirim: 15",
+    "Terkirim tepat waktu: 10",
+    "sla_on_time_rate: 0.6667 (66,67%)"
+  ],
+  "confidence": 1,
+  "perlu_eskalasi": false
+}

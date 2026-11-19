@@ -63,9 +63,9 @@ Asumsi kurs: **1 USD ≈ Rp16.500** (cek mandiri saat submit; sesuaikan bila per
 
 Risiko ROI (minimal dua) dan skenario terburuk:
 
-1. Volume pertanyaan/refund nyata jauh lebih kecil → penghematan tenaga turun; VPS tetap jalan.
-2. Biaya LLM naik atau prompt membengkak (banyak tool call) → pantau usage; batasi digest MCP ke 1 merchant top.
-3. Skenario terburuk: VPS down saat penilaian + secret bocor → nilai Deployment turun; mitigasi backup export + rotate token.
+1. Volume pertanyaan/refund nyata jauh lebih kecil → penghematan tenaga turun; VPS tetap jalan (biaya platform tetap).
+2. Biaya LLM naik atau prompt membengkak (banyak tool call) → pantau Usage; batasi uji WF3; digest MCP hanya 1 merchant top.
+3. **Skenario terburuk:** VPS down / kredit AWS habis **saat penilaian** + secret (webhook/OpenAI) bocor di repo atau screenshot → smoke penilai gagal dan nilai Deployment turun tajam. Mitigasi: pantau Billing/Credits; backup export di `workflows/`; rotate token penilaian; jangan commit secret; setelah nilai keluar → revoke key + terminate VPS.
 
 ## 4. Batas Automasi & Risiko
 

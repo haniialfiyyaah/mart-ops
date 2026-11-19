@@ -27,7 +27,7 @@
       "id": "10451f36-7d73-4bd4-b313-2acfdf13de64",
       "name": "Telegram Trigger",
       "type": "n8n-nodes-base.telegramTrigger",
-      "typeVersion": 1.2,
+      "typeVersion": 1.5,
       "position": [
         320,
         304
@@ -67,6 +67,7 @@
         768,
         304
       ],
+      "alwaysOutputData": true,
       "credentials": {
         "postgres": {
           "id": "GANTI-ID-PG-READER",

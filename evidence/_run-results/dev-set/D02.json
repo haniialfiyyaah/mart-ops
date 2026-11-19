@@ -1,0 +1,9 @@
+{
+  "status": "dijawab",
+  "jawaban": "Pada 12 November 2026, ada 15 order yang masuk dan 6 yang terkirim.",
+  "data_dipakai": [
+    "KPI M003 untuk 2026-11-12: orders_total 15, delivered_total 6"
+  ],
+  "confidence": 1,
+  "perlu_eskalasi": false
+}

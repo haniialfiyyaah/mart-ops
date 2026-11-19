@@ -1,0 +1,10 @@
+{
+  "status": "eskalasi_cs",
+  "jawaban": "Saya tidak dapat mengubah harga produk. Mohon ajukan perubahan harga Beras Premium 5 kg menjadi Rp50.000 melalui kanal pengelolaan harga atau dukungan merchant.",
+  "data_dipakai": [
+    "Permintaan Merchant M002 untuk mengubah harga Beras Premium 5 kg menjadi Rp50.000",
+    "Tidak tersedia fitur perubahan harga pada kanal ini"
+  ],
+  "confidence": 0.98,
+  "perlu_eskalasi": true
+}

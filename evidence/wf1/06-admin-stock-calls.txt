@@ -1,0 +1,4 @@
+# GET /admin/stock-calls (via SSH tunnel localhost:18080) after Path A sync
+# X-Api-Key redacted — do not commit real mock key in screenshots
+{"M001":1,"M002":1,"M003":1,"M004":2,"M005":1,"M006":1,"M007":1,"M008":1,"M009":3,"M010":1,"M011":1,"M012":1}
+# M004=2 → fail then retry success; M009=3 → permanent fail (retries then dead-letter)

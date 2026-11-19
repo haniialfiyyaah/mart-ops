@@ -1,0 +1,11 @@
+HTTP/2 200 
+alt-svc: h3=":443"; ma=2592000
+content-security-policy: sandbox allow-downloads allow-forms allow-modals allow-orientation-lock allow-pointer-lock allow-popups allow-popups-to-escape-sandbox allow-presentation allow-scripts allow-top-navigation-by-user-activation allow-top-navigation-to-custom-protocols
+content-type: application/json; charset=utf-8
+date: Thu, 19 Nov 2026 14:30:03 GMT
+etag: W/"238-9tcLaVce08SmV8LyA1vqUt7wENs"
+vary: Accept-Encoding
+via: 1.1 Caddy
+content-length: 568
+
+{"status":"dijawab","jawaban":"Pada 12 Nov 2026, 9 dari 15 order batal/gagal (60%). Rinciannya: 8 karena stok habis dan 1 dibatalkan pelanggan. Data stok terbaru menunjukkan SKU-007 (Air Mineral 1,5 L/6 botol) qty 0, tetapi snapshot stok bertanggal 16 Nov, jadi belum bisa dipastikan item ini menyebabkan pembatalan pada 12 Nov.","data_dipakai":["Alasan batal/gagal 12 Nov 2026: stok_habis 8; pelanggan_membatalkan 1.","KPI 12 Nov 2026: 15 order; 9 batal/gagal (60%).","Stok terbaru (sinkronisasi 16 Nov 2026): SKU-007 qty 0."],"confidence":0.9,"perlu_eskalasi":false}

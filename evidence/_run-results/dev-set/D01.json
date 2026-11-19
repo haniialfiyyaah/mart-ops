@@ -1,0 +1,10 @@
+{
+  "status": "dijawab",
+  "jawaban": "Pada 12 Nov 2026, tercatat 8 pembatalan karena stok habis dan 1 karena pelanggan membatalkan. Data stok terbaru (19 Nov) menunjukkan SKU-007 Air Mineral 1,5 L (6 botol) qty 0—ini mungkin terkait, tetapi datanya bukan snapshot pada tanggal pembatalan.",
+  "data_dipakai": [
+    "Alasan pembatalan M003 pada 2026-11-12: stok_habis 8, pelanggan_membatalkan 1.",
+    "Stok M003 terbaru, tersinkron 2026-11-19: SKU-007 qty 0."
+  ],
+  "confidence": 0.88,
+  "perlu_eskalasi": false
+}

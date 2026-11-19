@@ -21,7 +21,7 @@ Rumus self-hosted bulanan (inti):
 
 1. **Teknis:** Milestone mensyaratkan instance self-hosted Published + Telegram Trigger/approval butuh HTTPS publik; Cloud Starter rawan kehabisan eksekusi karena Schedule 15 menit.
 2. **Bisnis:** Biaya kontrolable untuk lab/penilaian; Community Edition n8n tanpa meter eksekusi. Milestone ini memakai **AWS Free Tier credit US$100**; per **16 Nov 2026** estimasi terpakai ≈ **US$2,22** (Billing/Credits) — masih jauh di bawah kredit, selaras estimasi SETUP (~US$13 untuk jendela lab).
-3. **Kepatuhan:** Data order & stok merchant diproses di infrastruktur yang kita kendalikan (VPS), selaras semangat minimalisasi transfer data ke pihak ketiga di luar kebutuhan (rujuk prinsip kehati-hatian pengolahan data pribadi pada **UU No. 27 Tahun 2022 tentang Perlindungan Data Pribadi** — baca pasal terkait asas pemrosesan / keamanan; bukan legal advice). Secret hanya di credential n8n + `.env` (tidak di repo).
+3. **Kepatuhan:** Data order & stok diproses di VPS yang kita kendalikan (bukan n8n Cloud). Merujuk **UU No. 27 Tahun 2022 tentang Perlindungan Data Pribadi**: **Pasal 16** (asas pemrosesan, termasuk kehati-hatian dan keamanan) dan **Pasal 39** (pengendali wajib melindungi data pribadi dari akses/pengungkapan tidak sah). Penerapan di solusi: secret hanya di credential n8n + `.env` (bukan repo); Header Auth webhook; role DB terpisah; port DB/mock/Kuma tidak publik; allowlist Telegram. (Bukan legal advice.)
 
 ## 3. Rencana Deployment (final)
 

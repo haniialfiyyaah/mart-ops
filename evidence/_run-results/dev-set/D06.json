@@ -1,0 +1,10 @@
+{
+  "status": "eskalasi_cs",
+  "jawaban": "Data kompensasi tidak tersedia, jadi saya belum dapat memastikan nominal yang akan diterima. Pada 12 Nov 2026 tercatat 2 order batal/gagal: 1 karena ditolak merchant dan 1 karena stok habis. Permintaan kompensasi perlu dieskalasikan untuk ditinjau.",
+  "data_dipakai": [
+    "merchant_kpi M007, 2026-11-12: 15 order, 2 batal/gagal",
+    "cancel_reasons M007, 2026-11-12: 1 ditolak merchant; 1 stok habis"
+  ],
+  "confidence": 0.42,
+  "perlu_eskalasi": true
+}

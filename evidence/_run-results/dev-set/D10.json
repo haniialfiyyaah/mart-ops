@@ -1,0 +1,10 @@
+{
+  "status": "dijawab",
+  "jawaban": "Kemarin, 8 pembatalan beralasan stok habis; pelanggan mengeluhkan barang masih tampak tersedia di aplikasi dan ada yang sudah lama menunggu. Ada 1 pembatalan oleh pelanggan tanpa catatan. Catatan tidak menyebut SKU; stok saat ini menunjukkan SKU-007 qty 0.",
+  "data_dipakai": [
+    "Alasan pembatalan dan contoh catatan pelanggan M003, 2026-11-12",
+    "Status stok M003 saat ini: SKU-007 qty 0"
+  ],
+  "confidence": 0.94,
+  "perlu_eskalasi": false
+}

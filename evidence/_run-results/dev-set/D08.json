@@ -1,0 +1,10 @@
+{
+  "status": "eskalasi_cs",
+  "jawaban": "Belum bisa dipastikan apakah order besok akan naik atau turun. Data 12 Nov 2026 mencatat 15 order; data satu hari saja belum cukup untuk memperkirakan arah besok.",
+  "data_dipakai": [
+    "Merchant M012",
+    "KPI 12 Nov 2026: 15 order, 0 dibatalkan/gagal, 15 terkirim"
+  ],
+  "confidence": 0.25,
+  "perlu_eskalasi": true
+}
